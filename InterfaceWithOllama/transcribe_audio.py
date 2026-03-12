@@ -6,7 +6,7 @@ from faster_whisper import WhisperModel
 
 
 # Change this if needed:
-MODEL_SIZE = "medium"   # try: "small", "medium", "large-v3"
+MODEL_SIZE = "large-v3"   # try: "small", "medium", "large-v3"
 #DEVICE = "cuda"         # use "cpu" if you do not want GPU
 #COMPUTE_TYPE = "float16"  # for many NVIDIA GPUs; use "int8" on CPU
 

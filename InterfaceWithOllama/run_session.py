@@ -11,7 +11,7 @@ from faster_whisper import WhisperModel
 # =========================
 
 # Whisper
-WHISPER_MODEL_SIZE = "medium"   # "small", "medium", "large-v3"
+WHISPER_MODEL_SIZE = "large-v3"   # "small", "medium", "large-v3"
 WHISPER_DEVICE = "cpu"         # change to "cuda" later if needed
 WHISPER_COMPUTE_TYPE = "int8"  # good for CPU
 
