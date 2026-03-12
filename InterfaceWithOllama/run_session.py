@@ -4,7 +4,7 @@ import sys
 import requests
 
 from faster_whisper import WhisperModel
-
+from audio_features import extract_audio_behavior_features
 
 # =========================
 # CONFIG
@@ -46,18 +46,25 @@ Your task is to understand the transcript and write the final summary in English
 
 The transcript may contain statements from both the patient and the therapist.
 
+You are also given objective audio behavior observations. These observations describe speech behavior only.
+Do not infer diagnosis, hidden emotions, or psychological states from them.
+You may mention them only as neutral behavioral observations when relevant.
+
 Rules:
-- Use only information explicitly present in the transcript.
-- Do not add facts, interpretations, or conclusions.
+- Use only information explicitly present in the transcript and audio observations.
+- Do not add facts, interpretations, or conclusions beyond the provided inputs.
 - Do not make a diagnosis.
 - Do not write sentences about what was not mentioned.
 - If a detail is not explicitly stated, omit it.
-- Use neutral language such as "The patient reports..." or "The therapist explores..."
+- Use neutral language such as "The patient reports..." and "The therapist explores..."
+- If you mention audio behavior, describe it only as observation (for example: longer pauses, lower vocal energy, slower speech pattern).
 - Write the summary entirely in English.
-- Limit the summary to 80–120 words.
 
 Transcript:
 {TRANSCRIPTION}
+
+Audio behavior observations:
+{AUDIO_FEATURES}
 """
 
 
@@ -99,12 +106,16 @@ def call_ollama(prompt: str, model: str = OLLAMA_MODEL_NAME) -> str:
     return data["response"].strip()
 
 
-def build_prompt(prompt_template: str, transcript_text: str) -> str:
+def build_prompt(prompt_template: str, transcript_text: str, audio_features_text: str = "") -> str:
     if "{TRANSCRIPTION}" not in prompt_template:
         raise ValueError("Prompt template must contain the placeholder {TRANSCRIPTION}")
-    return prompt_template.replace("{TRANSCRIPTION}", transcript_text)
 
+    prompt = prompt_template.replace("{TRANSCRIPTION}", transcript_text)
 
+    if "{AUDIO_FEATURES}" in prompt:
+        prompt = prompt.replace("{AUDIO_FEATURES}", audio_features_text)
+
+    return prompt
 # =========================
 # WHISPER / TRANSCRIPTION
 # =========================
@@ -183,8 +194,12 @@ def clean_transcript(raw_transcript: str, cleanup_prompt_template: str) -> tuple
     return cleaned, prompt
 
 
-def summarize_transcript(cleaned_transcript: str, summary_prompt_template: str) -> tuple[str, str]:
-    prompt = build_prompt(summary_prompt_template, cleaned_transcript)
+def summarize_transcript(
+    cleaned_transcript: str,
+    summary_prompt_template: str,
+    audio_features_text: str = "",
+) -> tuple[str, str]:
+    prompt = build_prompt(summary_prompt_template, cleaned_transcript, audio_features_text)
     summary = call_ollama(prompt)
     return summary, prompt
 
@@ -197,6 +212,7 @@ def run_text_pipeline(
     raw_transcript_text: str,
     cleanup_prompt_template: str = DEFAULT_CLEANUP_PROMPT_TEMPLATE,
     summary_prompt_template: str = DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+    audio_features_text: str = "",
 ) -> dict:
     output_dir = Path("output")
     raw_transcript_plain_path = output_dir / "transcript_raw.txt"
@@ -222,6 +238,7 @@ def run_text_pipeline(
     summary, summary_prompt = summarize_transcript(
         cleaned_transcript,
         summary_prompt_template,
+        audio_features_text=audio_features_text,
     )
     summary_path.write_text(summary, encoding="utf-8")
     summary_prompt_log_path.write_text(summary_prompt, encoding="utf-8")
@@ -284,6 +301,7 @@ def run_pipeline(
     raw_transcript_json_path = output_dir / "transcript.json"
     raw_transcript_timestamps_path = output_dir / "transcript_timestamps.txt"
     raw_transcript_plain_path = output_dir / "transcript_raw.txt"
+    audio_features_path = output_dir / "audio_features.json"
 
     info, segments = transcribe_audio(audio_path)
 
@@ -295,13 +313,23 @@ def run_pipeline(
     if not raw_transcript_text:
         raise ValueError("Raw transcript is empty after transcription.")
 
+    audio_features = extract_audio_behavior_features(audio_path, segments)
+    ensure_parent_dir(audio_features_path)
+    audio_features_path.write_text(
+        json.dumps(audio_features, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
     result = run_text_pipeline(
         raw_transcript_text,
         cleanup_prompt_template=cleanup_prompt_template,
         summary_prompt_template=summary_prompt_template,
+        audio_features_text=audio_features["audio_behavior_summary"],
     )
 
     result["detected_language"] = getattr(info, "language", "unknown")
+    result["audio_features"] = audio_features
+    result["audio_features_path"] = str(audio_features_path.resolve())
     return result
 
 
