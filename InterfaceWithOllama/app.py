@@ -5,6 +5,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from run_session import (
     run_pipeline,
+    run_text_pipeline,
     DEFAULT_CLEANUP_PROMPT_TEMPLATE,
     DEFAULT_SUMMARY_PROMPT_TEMPLATE,
 )
@@ -20,23 +21,29 @@ class TherapyAssistantApp:
         self._build_ui()
 
     def _build_ui(self) -> None:
-        # Top controls
         top_frame = tk.Frame(self.root)
         top_frame.pack(fill="x", padx=10, pady=10)
 
         tk.Label(top_frame, text="Audio file:").pack(side="left")
 
-        self.file_entry = tk.Entry(top_frame, textvariable=self.selected_file, width=80)
+        self.file_entry = tk.Entry(top_frame, textvariable=self.selected_file, width=60)
         self.file_entry.pack(side="left", padx=5)
 
         tk.Button(top_frame, text="Browse", command=self.browse_file).pack(side="left", padx=5)
-        self.run_button = tk.Button(top_frame, text="Run Pipeline", command=self.run_pipeline_clicked)
-        self.run_button.pack(side="left", padx=5)
+
+        self.run_full_button = tk.Button(
+            top_frame, text="Run Full Pipeline", command=self.run_pipeline_clicked
+        )
+        self.run_full_button.pack(side="left", padx=5)
+
+        self.run_text_button = tk.Button(
+            top_frame, text="Run From Raw Transcript", command=self.run_from_text_clicked
+        )
+        self.run_text_button.pack(side="left", padx=5)
 
         self.status_label = tk.Label(self.root, text="Ready", anchor="w")
         self.status_label.pack(fill="x", padx=10)
 
-        # Notebook / Tabs
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -50,7 +57,6 @@ class TherapyAssistantApp:
         self._build_results_tab()
 
     def _build_prompts_tab(self) -> None:
-        # Cleanup Prompt Section
         cleanup_header = tk.Frame(self.prompts_tab)
         cleanup_header.pack(fill="x", padx=10, pady=(10, 0))
 
@@ -63,7 +69,6 @@ class TherapyAssistantApp:
         self.cleanup_prompt_text.pack(fill="both", expand=True, padx=10, pady=5)
         self.cleanup_prompt_text.insert("1.0", DEFAULT_CLEANUP_PROMPT_TEMPLATE.strip())
 
-        # Summary Prompt Section
         summary_header = tk.Frame(self.prompts_tab)
         summary_header.pack(fill="x", padx=10, pady=(10, 0))
 
@@ -161,6 +166,25 @@ class TherapyAssistantApp:
         self.summary_prompt_text.insert("1.0", DEFAULT_SUMMARY_PROMPT_TEMPLATE.strip())
         self.status_label.config(text="Summary prompt reset to default")
 
+    def _validate_prompts(self, cleanup_prompt: str, summary_prompt: str) -> bool:
+        if "{TRANSCRIPTION}" not in cleanup_prompt:
+            messagebox.showerror("Invalid cleanup prompt", "Cleanup prompt must contain {TRANSCRIPTION}")
+            return False
+
+        if "{TRANSCRIPTION}" not in summary_prompt:
+            messagebox.showerror("Invalid summary prompt", "Summary prompt must contain {TRANSCRIPTION}")
+            return False
+
+        return True
+
+    def _disable_run_buttons(self) -> None:
+        self.run_full_button.config(state="disabled")
+        self.run_text_button.config(state="disabled")
+
+    def _enable_run_buttons(self) -> None:
+        self.run_full_button.config(state="normal")
+        self.run_text_button.config(state="normal")
+
     def run_pipeline_clicked(self) -> None:
         file_path = self.selected_file.get().strip()
         if not file_path:
@@ -174,16 +198,11 @@ class TherapyAssistantApp:
         cleanup_prompt = self.cleanup_prompt_text.get("1.0", tk.END).strip()
         summary_prompt = self.summary_prompt_text.get("1.0", tk.END).strip()
 
-        if "{TRANSCRIPTION}" not in cleanup_prompt:
-            messagebox.showerror("Invalid cleanup prompt", "Cleanup prompt must contain {TRANSCRIPTION}")
+        if not self._validate_prompts(cleanup_prompt, summary_prompt):
             return
 
-        if "{TRANSCRIPTION}" not in summary_prompt:
-            messagebox.showerror("Invalid summary prompt", "Summary prompt must contain {TRANSCRIPTION}")
-            return
-
-        self.run_button.config(state="disabled")
-        self.status_label.config(text="Running pipeline... please wait")
+        self._disable_run_buttons()
+        self.status_label.config(text="Running full pipeline... please wait")
 
         self.raw_text.delete("1.0", tk.END)
         self.cleaned_text.delete("1.0", tk.END)
@@ -192,6 +211,31 @@ class TherapyAssistantApp:
         thread = threading.Thread(
             target=self._run_pipeline_background,
             args=(file_path, cleanup_prompt, summary_prompt),
+            daemon=True,
+        )
+        thread.start()
+
+    def run_from_text_clicked(self) -> None:
+        raw_transcript = self.raw_text.get("1.0", tk.END).strip()
+        if not raw_transcript:
+            messagebox.showwarning("Missing transcript", "Raw Transcript is empty.")
+            return
+
+        cleanup_prompt = self.cleanup_prompt_text.get("1.0", tk.END).strip()
+        summary_prompt = self.summary_prompt_text.get("1.0", tk.END).strip()
+
+        if not self._validate_prompts(cleanup_prompt, summary_prompt):
+            return
+
+        self._disable_run_buttons()
+        self.status_label.config(text="Running cleanup + summary from raw transcript...")
+
+        self.cleaned_text.delete("1.0", tk.END)
+        self.summary_text.delete("1.0", tk.END)
+
+        thread = threading.Thread(
+            target=self._run_text_pipeline_background,
+            args=(raw_transcript, cleanup_prompt, summary_prompt),
             daemon=True,
         )
         thread.start()
@@ -207,22 +251,38 @@ class TherapyAssistantApp:
         except Exception as exc:
             self.root.after(0, self._handle_error, str(exc))
 
+    def _run_text_pipeline_background(self, raw_transcript: str, cleanup_prompt: str, summary_prompt: str) -> None:
+        try:
+            result = run_text_pipeline(
+                raw_transcript,
+                cleanup_prompt_template=cleanup_prompt,
+                summary_prompt_template=summary_prompt,
+            )
+            self.root.after(0, self._update_ui_with_result, result)
+        except Exception as exc:
+            self.root.after(0, self._handle_error, str(exc))
+
     def _update_ui_with_result(self, result: dict) -> None:
-        self.raw_text.insert(tk.END, result["raw_transcript"])
-        self.cleaned_text.insert(tk.END, result["cleaned_transcript"])
+        if result["raw_transcript"]:
+            self.raw_text.delete("1.0", tk.END)
+            self.raw_text.insert(tk.END, result["raw_transcript"])
+
+        if result["cleaned_transcript"]:
+            self.cleaned_text.delete("1.0", tk.END)
+            self.cleaned_text.insert(tk.END, result["cleaned_transcript"])
+
+        self.summary_text.delete("1.0", tk.END)
         self.summary_text.insert(tk.END, result["summary"])
 
         self.status_label.config(
             text=f"Done. Detected language: {result['detected_language']}"
         )
-        self.run_button.config(state="normal")
-
-        # Automatically switch to results tab after completion
+        self._enable_run_buttons()
         self.notebook.select(self.results_tab)
 
     def _handle_error(self, error_message: str) -> None:
         self.status_label.config(text="Error")
-        self.run_button.config(state="normal")
+        self._enable_run_buttons()
         messagebox.showerror("Pipeline error", error_message)
 
 

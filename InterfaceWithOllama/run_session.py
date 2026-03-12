@@ -11,8 +11,8 @@ from faster_whisper import WhisperModel
 # =========================
 
 WHISPER_MODEL_SIZE = "large-v3"
-WHISPER_DEVICE = "cpu"
-WHISPER_COMPUTE_TYPE = "int8"
+WHISPER_DEVICE = "cpu"         # change to "cuda" later if desired
+WHISPER_COMPUTE_TYPE = "int8"  # good for CPU
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL_NAME = "qwen3:8b"
@@ -61,6 +61,10 @@ Transcript:
 """
 
 
+# =========================
+# HELPERS
+# =========================
+
 def ensure_parent_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -94,6 +98,16 @@ def call_ollama(prompt: str, model: str = OLLAMA_MODEL_NAME) -> str:
 
     return data["response"].strip()
 
+
+def build_prompt(prompt_template: str, transcript_text: str) -> str:
+    if "{TRANSCRIPTION}" not in prompt_template:
+        raise ValueError("Prompt template must contain the placeholder {TRANSCRIPTION}")
+    return prompt_template.replace("{TRANSCRIPTION}", transcript_text)
+
+
+# =========================
+# WHISPER / TRANSCRIPTION
+# =========================
 
 def transcribe_audio(audio_path: Path):
     if not audio_path.exists():
@@ -159,11 +173,9 @@ def save_plain_transcript(path: Path, segments) -> None:
     path.write_text(plain_text, encoding="utf-8")
 
 
-def build_prompt(prompt_template: str, transcript_text: str) -> str:
-    if "{TRANSCRIPTION}" not in prompt_template:
-        raise ValueError("Prompt template must contain the placeholder {TRANSCRIPTION}")
-    return prompt_template.replace("{TRANSCRIPTION}", transcript_text)
-
+# =========================
+# OLLAMA STAGES
+# =========================
 
 def clean_transcript(raw_transcript: str, cleanup_prompt_template: str) -> tuple[str, str]:
     prompt = build_prompt(cleanup_prompt_template, raw_transcript)
@@ -177,6 +189,92 @@ def summarize_transcript(cleaned_transcript: str, summary_prompt_template: str) 
     return summary, prompt
 
 
+# =========================
+# PIPELINES
+# =========================
+
+def run_text_pipeline(
+    raw_transcript_text: str,
+    cleanup_prompt_template: str = DEFAULT_CLEANUP_PROMPT_TEMPLATE,
+    summary_prompt_template: str = DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+) -> dict:
+    output_dir = Path("output")
+    raw_transcript_plain_path = output_dir / "transcript_raw.txt"
+    clean_transcript_path = output_dir / "transcript_clean.txt"
+    cleanup_prompt_log_path = output_dir / "prompt_cleanup.txt"
+    summary_prompt_log_path = output_dir / "prompt_summary.txt"
+    summary_path = output_dir / "summary.txt"
+
+    raw_transcript_text = raw_transcript_text.strip()
+    if not raw_transcript_text:
+        raise ValueError("Raw transcript is empty.")
+
+    ensure_parent_dir(raw_transcript_plain_path)
+    raw_transcript_plain_path.write_text(raw_transcript_text, encoding="utf-8")
+
+    cleaned_transcript, cleanup_prompt = clean_transcript(
+        raw_transcript_text,
+        cleanup_prompt_template,
+    )
+    clean_transcript_path.write_text(cleaned_transcript, encoding="utf-8")
+    cleanup_prompt_log_path.write_text(cleanup_prompt, encoding="utf-8")
+
+    summary, summary_prompt = summarize_transcript(
+        cleaned_transcript,
+        summary_prompt_template,
+    )
+    summary_path.write_text(summary, encoding="utf-8")
+    summary_prompt_log_path.write_text(summary_prompt, encoding="utf-8")
+
+    return {
+        "detected_language": "from_text_input",
+        "raw_transcript": raw_transcript_text,
+        "cleaned_transcript": cleaned_transcript,
+        "summary": summary,
+        "cleanup_prompt_used": cleanup_prompt,
+        "summary_prompt_used": summary_prompt,
+        "raw_transcript_path": str(raw_transcript_plain_path.resolve()),
+        "clean_transcript_path": str(clean_transcript_path.resolve()),
+        "summary_path": str(summary_path.resolve()),
+    }
+
+
+def run_summary_only_pipeline(
+    cleaned_transcript_text: str,
+    summary_prompt_template: str = DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+) -> dict:
+    output_dir = Path("output")
+    clean_transcript_path = output_dir / "transcript_clean.txt"
+    summary_prompt_log_path = output_dir / "prompt_summary.txt"
+    summary_path = output_dir / "summary.txt"
+
+    cleaned_transcript_text = cleaned_transcript_text.strip()
+    if not cleaned_transcript_text:
+        raise ValueError("Cleaned transcript is empty.")
+
+    ensure_parent_dir(clean_transcript_path)
+    clean_transcript_path.write_text(cleaned_transcript_text, encoding="utf-8")
+
+    summary, summary_prompt = summarize_transcript(
+        cleaned_transcript_text,
+        summary_prompt_template,
+    )
+    summary_path.write_text(summary, encoding="utf-8")
+    summary_prompt_log_path.write_text(summary_prompt, encoding="utf-8")
+
+    return {
+        "detected_language": "from_cleaned_text_input",
+        "raw_transcript": "",
+        "cleaned_transcript": cleaned_transcript_text,
+        "summary": summary,
+        "cleanup_prompt_used": "",
+        "summary_prompt_used": summary_prompt,
+        "raw_transcript_path": "",
+        "clean_transcript_path": str(clean_transcript_path.resolve()),
+        "summary_path": str(summary_path.resolve()),
+    }
+
+
 def run_pipeline(
     audio_path: Path,
     cleanup_prompt_template: str = DEFAULT_CLEANUP_PROMPT_TEMPLATE,
@@ -186,10 +284,6 @@ def run_pipeline(
     raw_transcript_json_path = output_dir / "transcript.json"
     raw_transcript_timestamps_path = output_dir / "transcript_timestamps.txt"
     raw_transcript_plain_path = output_dir / "transcript_raw.txt"
-    clean_transcript_path = output_dir / "transcript_clean.txt"
-    cleanup_prompt_log_path = output_dir / "prompt_cleanup.txt"
-    summary_prompt_log_path = output_dir / "prompt_summary.txt"
-    summary_path = output_dir / "summary.txt"
 
     info, segments = transcribe_audio(audio_path)
 
@@ -201,28 +295,19 @@ def run_pipeline(
     if not raw_transcript_text:
         raise ValueError("Raw transcript is empty after transcription.")
 
-    cleaned_transcript, cleanup_prompt = clean_transcript(raw_transcript_text, cleanup_prompt_template)
-    ensure_parent_dir(clean_transcript_path)
-    clean_transcript_path.write_text(cleaned_transcript, encoding="utf-8")
-    cleanup_prompt_log_path.write_text(cleanup_prompt, encoding="utf-8")
+    result = run_text_pipeline(
+        raw_transcript_text,
+        cleanup_prompt_template=cleanup_prompt_template,
+        summary_prompt_template=summary_prompt_template,
+    )
 
-    summary, summary_prompt = summarize_transcript(cleaned_transcript, summary_prompt_template)
-    ensure_parent_dir(summary_path)
-    summary_path.write_text(summary, encoding="utf-8")
-    summary_prompt_log_path.write_text(summary_prompt, encoding="utf-8")
+    result["detected_language"] = getattr(info, "language", "unknown")
+    return result
 
-    return {
-        "detected_language": getattr(info, "language", "unknown"),
-        "raw_transcript": raw_transcript_text,
-        "cleaned_transcript": cleaned_transcript,
-        "summary": summary,
-        "cleanup_prompt_used": cleanup_prompt,
-        "summary_prompt_used": summary_prompt,
-        "raw_transcript_path": str(raw_transcript_plain_path.resolve()),
-        "clean_transcript_path": str(clean_transcript_path.resolve()),
-        "summary_path": str(summary_path.resolve()),
-    }
 
+# =========================
+# CLI
+# =========================
 
 def main() -> int:
     input_audio = Path("input/session.m4a")
