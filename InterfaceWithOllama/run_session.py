@@ -216,7 +216,7 @@ def summarize_transcript(cleaned_transcript: str) -> str:
 # MAIN PIPELINE
 # =========================
 
-def run_pipeline(audio_path: Path) -> None:
+def run_pipeline(audio_path: Path) -> dict:
     output_dir = Path("output")
     raw_transcript_json_path = output_dir / "transcript.json"
     raw_transcript_timestamps_path = output_dir / "transcript_timestamps.txt"
@@ -255,36 +255,38 @@ def run_pipeline(audio_path: Path) -> None:
 
     print("[4/4] Done.\n")
 
-    print("=== DETECTED TRANSCRIPT LANGUAGE ===")
-    print(getattr(info, "language", "unknown"))
-
-    print("\n=== RAW TRANSCRIPT ===\n")
-    print(raw_transcript_text)
-
-    print("\n=== CLEANED TRANSCRIPT ===\n")
-    print(cleaned_transcript)
-
-    print("\n=== GENERATED SUMMARY ===\n")
-    print(summary)
-
-    print("\n=== OUTPUT FILES ===")
-    print(f"Raw transcript:         {raw_transcript_plain_path.resolve()}")
-    print(f"Timestamped transcript: {raw_transcript_timestamps_path.resolve()}")
-    print(f"Transcript JSON:        {raw_transcript_json_path.resolve()}")
-    print(f"Clean transcript:       {clean_transcript_path.resolve()}")
-    print(f"Cleanup prompt:         {cleanup_prompt_log_path.resolve()}")
-    print(f"Summary prompt:         {summary_prompt_log_path.resolve()}")
-    print(f"Summary:                {summary_path.resolve()}")
+    return {
+        "detected_language": getattr(info, "language", "unknown"),
+        "raw_transcript": raw_transcript_text,
+        "cleaned_transcript": cleaned_transcript,
+        "summary": summary,
+        "raw_transcript_path": str(raw_transcript_plain_path.resolve()),
+        "clean_transcript_path": str(clean_transcript_path.resolve()),
+        "summary_path": str(summary_path.resolve()),
+    }
 
 
 def main() -> int:
-    input_audio = Path("input/Recording.m4a")
+    input_audio = Path("input/session.m4a")
 
     if len(sys.argv) > 1:
         input_audio = Path(sys.argv[1])
 
     try:
-        run_pipeline(input_audio)
+        result = run_pipeline(input_audio)
+
+        print("=== DETECTED TRANSCRIPT LANGUAGE ===")
+        print(result["detected_language"])
+
+        print("\n=== RAW TRANSCRIPT ===\n")
+        print(result["raw_transcript"])
+
+        print("\n=== CLEANED TRANSCRIPT ===\n")
+        print(result["cleaned_transcript"])
+
+        print("\n=== GENERATED SUMMARY ===\n")
+        print(result["summary"])
+
         return 0
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
