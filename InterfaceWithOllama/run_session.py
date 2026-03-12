@@ -10,36 +10,18 @@ from faster_whisper import WhisperModel
 # CONFIG
 # =========================
 
-# Whisper
-WHISPER_MODEL_SIZE = "large-v3"   # "small", "medium", "large-v3"
-WHISPER_DEVICE = "cpu"         # change to "cuda" later if needed
-WHISPER_COMPUTE_TYPE = "int8"  # good for CPU
+WHISPER_MODEL_SIZE = "large-v3"
+WHISPER_DEVICE = "cpu"
+WHISPER_COMPUTE_TYPE = "int8"
 
-# Ollama
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL_NAME = "qwen3:8b"
 
-# Cleanup prompt
-CLEANUP_PROMPT_TEMPLATE_ENGLISH = """
-You are cleaning an automatic speech transcription from a therapy session.
-
-Rules:
-- Correct obvious transcription errors and phonetic mistakes.
-- Preserve the original meaning.
-- Do not add new information.
-- Do not summarize.
-- Keep the same language as the original transcript whenever possible.
-- If a word or phrase is clearly a transcription mistake, replace it with the most likely intended wording.
-- Keep references to the patient and therapist clear and natural.
-- Remove obvious nonsense words or mistaken names unless they are clearly intended and supported by the transcript.
-- Return only the cleaned transcript text.
-
-Transcript:
-{TRANSCRIPTION}
-"""
-
-CLEANUP_PROMPT_TEMPLATE = """
+DEFAULT_CLEANUP_PROMPT_TEMPLATE = """
 Está corrigiendo una transcripción automática de una sesión de terapia.
+
+Contexto:
+La transcripción puede contener términos frecuentes como: paciente, terapeuta, ansiedad, reuniones, trabajo, pensamientos automáticos, juicio, respiración, dormir.
 
 Reglas:
 - Corrija errores obvios de transcripción y errores fonéticos.
@@ -56,8 +38,7 @@ Transcripción:
 {TRANSCRIPTION}
 """
 
-# Summary prompt
-SUMMARY_PROMPT_TEMPLATE = """
+DEFAULT_SUMMARY_PROMPT_TEMPLATE = """
 You are assisting a licensed psychologist.
 
 The following transcript may contain Spanish, French, or English speech from a therapy session.
@@ -79,10 +60,6 @@ Transcript:
 {TRANSCRIPTION}
 """
 
-
-# =========================
-# HELPERS
-# =========================
 
 def ensure_parent_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,10 +94,6 @@ def call_ollama(prompt: str, model: str = OLLAMA_MODEL_NAME) -> str:
 
     return data["response"].strip()
 
-
-# =========================
-# STEP 1: TRANSCRIBE
-# =========================
 
 def transcribe_audio(audio_path: Path):
     if not audio_path.exists():
@@ -186,37 +159,29 @@ def save_plain_transcript(path: Path, segments) -> None:
     path.write_text(plain_text, encoding="utf-8")
 
 
-# =========================
-# STEP 2: CLEANUP
-# =========================
-
-def build_cleanup_prompt(raw_transcript: str) -> str:
-    return CLEANUP_PROMPT_TEMPLATE.replace("{TRANSCRIPTION}", raw_transcript)
+def build_prompt(prompt_template: str, transcript_text: str) -> str:
+    if "{TRANSCRIPTION}" not in prompt_template:
+        raise ValueError("Prompt template must contain the placeholder {TRANSCRIPTION}")
+    return prompt_template.replace("{TRANSCRIPTION}", transcript_text)
 
 
-def clean_transcript(raw_transcript: str) -> str:
-    prompt = build_cleanup_prompt(raw_transcript)
-    return call_ollama(prompt)
+def clean_transcript(raw_transcript: str, cleanup_prompt_template: str) -> tuple[str, str]:
+    prompt = build_prompt(cleanup_prompt_template, raw_transcript)
+    cleaned = call_ollama(prompt)
+    return cleaned, prompt
 
 
-# =========================
-# STEP 3: SUMMARIZE
-# =========================
-
-def build_summary_prompt(cleaned_transcript: str) -> str:
-    return SUMMARY_PROMPT_TEMPLATE.replace("{TRANSCRIPTION}", cleaned_transcript)
+def summarize_transcript(cleaned_transcript: str, summary_prompt_template: str) -> tuple[str, str]:
+    prompt = build_prompt(summary_prompt_template, cleaned_transcript)
+    summary = call_ollama(prompt)
+    return summary, prompt
 
 
-def summarize_transcript(cleaned_transcript: str) -> str:
-    prompt = build_summary_prompt(cleaned_transcript)
-    return call_ollama(prompt)
-
-
-# =========================
-# MAIN PIPELINE
-# =========================
-
-def run_pipeline(audio_path: Path) -> dict:
+def run_pipeline(
+    audio_path: Path,
+    cleanup_prompt_template: str = DEFAULT_CLEANUP_PROMPT_TEMPLATE,
+    summary_prompt_template: str = DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+) -> dict:
     output_dir = Path("output")
     raw_transcript_json_path = output_dir / "transcript.json"
     raw_transcript_timestamps_path = output_dir / "transcript_timestamps.txt"
@@ -226,7 +191,6 @@ def run_pipeline(audio_path: Path) -> dict:
     summary_prompt_log_path = output_dir / "prompt_summary.txt"
     summary_path = output_dir / "summary.txt"
 
-    print("\n[1/4] Transcribing audio...")
     info, segments = transcribe_audio(audio_path)
 
     save_transcript_json(raw_transcript_json_path, info, segments)
@@ -237,29 +201,23 @@ def run_pipeline(audio_path: Path) -> dict:
     if not raw_transcript_text:
         raise ValueError("Raw transcript is empty after transcription.")
 
-    print("[2/4] Cleaning transcript...")
-    cleanup_prompt = build_cleanup_prompt(raw_transcript_text)
-    cleanup_prompt_log_path.write_text(cleanup_prompt, encoding="utf-8")
-
-    cleaned_transcript = clean_transcript(raw_transcript_text)
+    cleaned_transcript, cleanup_prompt = clean_transcript(raw_transcript_text, cleanup_prompt_template)
     ensure_parent_dir(clean_transcript_path)
     clean_transcript_path.write_text(cleaned_transcript, encoding="utf-8")
+    cleanup_prompt_log_path.write_text(cleanup_prompt, encoding="utf-8")
 
-    print("[3/4] Generating summary...")
-    summary_prompt = build_summary_prompt(cleaned_transcript)
-    summary_prompt_log_path.write_text(summary_prompt, encoding="utf-8")
-
-    summary = summarize_transcript(cleaned_transcript)
+    summary, summary_prompt = summarize_transcript(cleaned_transcript, summary_prompt_template)
     ensure_parent_dir(summary_path)
     summary_path.write_text(summary, encoding="utf-8")
-
-    print("[4/4] Done.\n")
+    summary_prompt_log_path.write_text(summary_prompt, encoding="utf-8")
 
     return {
         "detected_language": getattr(info, "language", "unknown"),
         "raw_transcript": raw_transcript_text,
         "cleaned_transcript": cleaned_transcript,
         "summary": summary,
+        "cleanup_prompt_used": cleanup_prompt,
+        "summary_prompt_used": summary_prompt,
         "raw_transcript_path": str(raw_transcript_plain_path.resolve()),
         "clean_transcript_path": str(clean_transcript_path.resolve()),
         "summary_path": str(summary_path.resolve()),
@@ -286,8 +244,8 @@ def main() -> int:
 
         print("\n=== GENERATED SUMMARY ===\n")
         print(result["summary"])
-
         return 0
+
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
