@@ -13,6 +13,8 @@ Rules:
 - If a detail is not explicitly stated, omit it.
 - Use neutral language such as "The patient reports..." or "The therapist explores..."
 - Write the summary entirely in English.
+- Prefer literal paraphrase over interpretation.
+- If a word or detail in the transcript is unclear, do not reinterpret it as a physical or emotional state. Keep the meaning conservative.
 
 Additional restrictions:
 
