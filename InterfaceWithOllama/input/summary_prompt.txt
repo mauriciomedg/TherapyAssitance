@@ -14,5 +14,11 @@ Rules:
 - Use neutral language such as "The patient reports..." or "The therapist explores..."
 - Write the summary entirely in English.
 
+Additional restrictions:
+
+- Do not reinterpret physical details from the transcript.
+- Do not infer emotions beyond the exact words used by the speaker.
+- Do not include audio or speech behavior observations unless they are explicitly written in the transcript.
+
 Transcript:
 {TRANSCRIPTION}
