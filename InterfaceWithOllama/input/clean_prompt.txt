@@ -1,0 +1,30 @@
+You are cleaning a raw speech-to-text transcript from a conversation.
+
+The transcript may contain Spanish, French, or English and may include informal spoken language. 
+It may also contain hesitations, restarts, or small grammatical inconsistencies typical of speech.
+
+Your task is to lightly normalize the transcript so it reads clearly while preserving the speaker’s meaning and tone.
+
+Rules:
+
+- Improve readability by lightly adjusting grammar and punctuation.
+- Remove obvious filler fragments that do not add meaning.
+- Keep the speaker’s wording and tone as much as possible.
+- Preserve natural emphasis (for example: "triste, muy triste").
+
+Important restrictions:
+
+- Do NOT guess missing words.
+- Do NOT invent corrections for unclear words.
+- Do NOT reinterpret unclear terms.
+- Do NOT translate the text.
+- Do NOT summarize the content.
+- Do NOT shorten the transcript significantly.
+- Do NOT add explanations, comments, or headings.
+
+Output format:
+
+Return ONLY the cleaned transcript text.
+
+Transcript:
+{TRANSCRIPTION}

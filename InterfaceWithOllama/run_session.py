@@ -4,7 +4,7 @@ import sys
 import requests
 
 from faster_whisper import WhisperModel
-from audio_features import extract_audio_behavior_features
+from audio_features import extract_segment_audio_features, build_segment_context_for_prompt
 
 # =========================
 # CONFIG
@@ -37,40 +37,120 @@ Reglas:
 Transcripción:
 {TRANSCRIPTION}
 """
-
 DEFAULT_SUMMARY_PROMPT_TEMPLATE = """
 You are assisting a licensed psychologist.
 
-The following transcript may contain Spanish, French, or English speech from a therapy session.
-Your task is to understand the transcript and write the final summary in English.
+The following material comes from a therapy session.
+It may contain Spanish, French, or English speech.
 
-The transcript may contain statements from both the patient and the therapist.
+You are given transcript segments aligned with speech behavior observations.
+Each segment may include:
+- the spoken text
+- whether there was a longer pause before speaking
+- whether vocal energy was lower or higher than the rest of the session
 
-You are also given objective audio behavior observations. These observations describe speech behavior only.
-Do not infer diagnosis, hidden emotions, or psychological states from them.
-You may mention them only as neutral behavioral observations when relevant.
+Your task is to write a concise summary in English.
 
-Rules:
-- Use only information explicitly present in the transcript and audio observations.
-- Do not add facts, interpretations, or conclusions beyond the provided inputs.
-- Do not make a diagnosis.
-- Do not write sentences about what was not mentioned.
-- If a detail is not explicitly stated, omit it.
-- Use neutral language such as "The patient reports..." and "The therapist explores..."
-- If you mention audio behavior, describe it only as observation (for example: longer pauses, lower vocal energy, slower speech pattern).
+Instructions:
+- Base the summary only on the provided segment text and aligned speech behavior observations.
+- Integrate speech behavior naturally into the sentence describing the relevant content when useful.
+- Only mention speech behavior when it adds context to an important part of the discussion.
+- Do not list behavior cues separately at the end.
+- Do not include raw statistics, percentages, or timestamps.
+- Do not infer diagnosis, hidden emotions, or psychological states from speech behavior alone.
+- Use neutral phrasing such as "The patient reports..." and "The therapist explores...".
+- Do not add facts or conclusions not supported by the provided material.
 - Write the summary entirely in English.
 
-Transcript:
+Aligned session segments:
 {TRANSCRIPTION}
-
-Audio behavior observations:
-{AUDIO_FEATURES}
 """
-
 
 # =========================
 # HELPERS
 # =========================
+import re
+
+def normalize_for_repeat_detection(text: str) -> str:
+    """
+    Normalize text for fuzzy duplicate comparison.
+    Lowercase, collapse spaces, and remove most punctuation.
+    """
+    text = text.lower()
+    text = re.sub(r"[^\w\sáéíóúüñàèìòùâêîôûç]", "", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def is_near_duplicate(a: str, b: str) -> bool:
+    """
+    Returns True if b is effectively the same as a, or a slightly longer
+    completion of a, which is common in Whisper loop artifacts.
+
+    Examples:
+    - 'y me fui a comprar un bag'
+      vs 'y me fui a comprar un bagel'  -> True
+    - exact repeated phrase             -> True
+    """
+    na = normalize_for_repeat_detection(a)
+    nb = normalize_for_repeat_detection(b)
+
+    if not na or not nb:
+        return False
+
+    # Exact normalized match
+    if na == nb:
+        return True
+
+    # One is a prefix of the other (partial-word / incremental decoding artifact)
+    if na.startswith(nb) or nb.startswith(na):
+        shorter = min(len(na), len(nb))
+        longer = max(len(na), len(nb))
+        # Avoid collapsing unrelated very short strings
+        if shorter >= 10 and longer <= int(shorter * 1.6):
+            return True
+
+    return False
+
+
+def remove_consecutive_repetition_loops(text: str) -> str:
+    """
+    Removes consecutive Whisper-style repetition loops line-by-line.
+    Keeps the most complete version in runs like:
+      '... comprar un bag'
+      '... comprar un bagel'
+      '... comprar un bagel'
+    """
+    # Split into sentence-like chunks while preserving order.
+    # This is intentionally simple and robust for messy transcripts.
+    chunks = re.split(r'(?<=[\.\!\?\n])\s+|,\s+', text)
+    chunks = [c.strip() for c in chunks if c and c.strip()]
+
+    if not chunks:
+        return text.strip()
+
+    cleaned = []
+    current_best = chunks[0]
+
+    for chunk in chunks[1:]:
+        if is_near_duplicate(current_best, chunk):
+            # Keep the more complete / longer one
+            if len(normalize_for_repeat_detection(chunk)) > len(normalize_for_repeat_detection(current_best)):
+                current_best = chunk
+        else:
+            cleaned.append(current_best)
+            current_best = chunk
+
+    cleaned.append(current_best)
+
+    # Rebuild as readable text
+    result = ". ".join(c.rstrip(".,;: ") for c in cleaned if c.strip())
+    result = re.sub(r"\s+", " ", result).strip()
+
+    if result and result[-1] not in ".!?":
+        result += "."
+
+    return result
 
 def ensure_parent_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,7 +283,6 @@ def summarize_transcript(
     summary = call_ollama(prompt)
     return summary, prompt
 
-
 # =========================
 # PIPELINES
 # =========================
@@ -228,17 +307,20 @@ def run_text_pipeline(
     ensure_parent_dir(raw_transcript_plain_path)
     raw_transcript_plain_path.write_text(raw_transcript_text, encoding="utf-8")
 
+    precleaned_transcript = remove_consecutive_repetition_loops(raw_transcript_text)
+
     cleaned_transcript, cleanup_prompt = clean_transcript(
-        raw_transcript_text,
+        precleaned_transcript,
         cleanup_prompt_template,
     )
+
     clean_transcript_path.write_text(cleaned_transcript, encoding="utf-8")
     cleanup_prompt_log_path.write_text(cleanup_prompt, encoding="utf-8")
 
     summary, summary_prompt = summarize_transcript(
         cleaned_transcript,
         summary_prompt_template,
-        audio_features_text=audio_features_text,
+        audio_features_text="",
     )
     summary_path.write_text(summary, encoding="utf-8")
     summary_prompt_log_path.write_text(summary_prompt, encoding="utf-8")
@@ -301,7 +383,12 @@ def run_pipeline(
     raw_transcript_json_path = output_dir / "transcript.json"
     raw_transcript_timestamps_path = output_dir / "transcript_timestamps.txt"
     raw_transcript_plain_path = output_dir / "transcript_raw.txt"
-    audio_features_path = output_dir / "audio_features.json"
+    segment_audio_features_path = output_dir / "segment_audio_features.json"
+    aligned_prompt_context_path = output_dir / "aligned_segments_for_summary.txt"
+    clean_transcript_path = output_dir / "transcript_clean.txt"
+    cleanup_prompt_log_path = output_dir / "prompt_cleanup.txt"
+    summary_prompt_log_path = output_dir / "prompt_summary.txt"
+    summary_path = output_dir / "summary.txt"
 
     info, segments = transcribe_audio(audio_path)
 
@@ -313,24 +400,48 @@ def run_pipeline(
     if not raw_transcript_text:
         raise ValueError("Raw transcript is empty after transcription.")
 
-    audio_features = extract_audio_behavior_features(audio_path, segments)
-    ensure_parent_dir(audio_features_path)
-    audio_features_path.write_text(
-        json.dumps(audio_features, ensure_ascii=False, indent=2),
+    precleaned_transcript = remove_consecutive_repetition_loops(raw_transcript_text)
+
+    cleaned_transcript, cleanup_prompt = clean_transcript(
+        precleaned_transcript,
+        cleanup_prompt_template,
+    )
+
+    clean_transcript_path.write_text(cleaned_transcript, encoding="utf-8")
+    cleanup_prompt_log_path.write_text(cleanup_prompt, encoding="utf-8")
+
+    # Replace original segment text with cleaned sentences approximately line by line when possible.
+    # For V2.5 we keep original segment texts for timing alignment and use cleaned full transcript separately.
+    segment_audio_data = extract_segment_audio_features(audio_path, segments)
+    segment_audio_features_path.write_text(
+        json.dumps(segment_audio_data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    result = run_text_pipeline(
-        raw_transcript_text,
-        cleanup_prompt_template=cleanup_prompt_template,
-        summary_prompt_template=summary_prompt_template,
-        audio_features_text=audio_features["audio_behavior_summary"],
-    )
+    aligned_segment_context = build_segment_context_for_prompt(segment_audio_data)
+    aligned_prompt_context_path.write_text(aligned_segment_context, encoding="utf-8")
 
-    result["detected_language"] = getattr(info, "language", "unknown")
-    result["audio_features"] = audio_features
-    result["audio_features_path"] = str(audio_features_path.resolve())
-    return result
+    summary, summary_prompt = summarize_transcript(
+        aligned_segment_context,
+        summary_prompt_template,
+    )
+    summary_path.write_text(summary, encoding="utf-8")
+    summary_prompt_log_path.write_text(summary_prompt, encoding="utf-8")
+
+    return {
+        "detected_language": getattr(info, "language", "unknown"),
+        "raw_transcript": raw_transcript_text,
+        "cleaned_transcript": cleaned_transcript,
+        "summary": summary,
+        "aligned_segment_context": aligned_segment_context,
+        "cleanup_prompt_used": cleanup_prompt,
+        "summary_prompt_used": summary_prompt,
+        "raw_transcript_path": str(raw_transcript_plain_path.resolve()),
+        "clean_transcript_path": str(clean_transcript_path.resolve()),
+        "summary_path": str(summary_path.resolve()),
+        "segment_audio_features_path": str(segment_audio_features_path.resolve()),
+        "aligned_prompt_context_path": str(aligned_prompt_context_path.resolve()),
+    }
 
 
 # =========================
