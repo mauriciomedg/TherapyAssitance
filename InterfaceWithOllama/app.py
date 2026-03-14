@@ -6,6 +6,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 from run_session import (
     run_pipeline,
     run_text_pipeline,
+    run_summary_only_pipeline,
     DEFAULT_CLEANUP_PROMPT_TEMPLATE,
     DEFAULT_SUMMARY_PROMPT_TEMPLATE,
 )
@@ -26,7 +27,7 @@ class TherapyAssistantApp:
 
         tk.Label(top_frame, text="Audio file:").pack(side="left")
 
-        self.file_entry = tk.Entry(top_frame, textvariable=self.selected_file, width=60)
+        self.file_entry = tk.Entry(top_frame, textvariable=self.selected_file, width=55)
         self.file_entry.pack(side="left", padx=5)
 
         tk.Button(top_frame, text="Browse", command=self.browse_file).pack(side="left", padx=5)
@@ -40,6 +41,11 @@ class TherapyAssistantApp:
             top_frame, text="Run From Raw Transcript", command=self.run_from_text_clicked
         )
         self.run_text_button.pack(side="left", padx=5)
+
+        self.run_summary_only_button = tk.Button(
+            top_frame, text="Run Summary Only", command=self.run_summary_only_clicked
+        )
+        self.run_summary_only_button.pack(side="left", padx=5)
 
         self.status_label = tk.Label(self.root, text="Ready", anchor="w")
         self.status_label.pack(fill="x", padx=10)
@@ -166,8 +172,8 @@ class TherapyAssistantApp:
         self.summary_prompt_text.insert("1.0", DEFAULT_SUMMARY_PROMPT_TEMPLATE.strip())
         self.status_label.config(text="Summary prompt reset to default")
 
-    def _validate_prompts(self, cleanup_prompt: str, summary_prompt: str) -> bool:
-        if "{TRANSCRIPTION}" not in cleanup_prompt:
+    def _validate_prompts(self, cleanup_prompt: str, summary_prompt: str, require_cleanup: bool = True) -> bool:
+        if require_cleanup and "{TRANSCRIPTION}" not in cleanup_prompt:
             messagebox.showerror("Invalid cleanup prompt", "Cleanup prompt must contain {TRANSCRIPTION}")
             return False
 
@@ -180,10 +186,12 @@ class TherapyAssistantApp:
     def _disable_run_buttons(self) -> None:
         self.run_full_button.config(state="disabled")
         self.run_text_button.config(state="disabled")
+        self.run_summary_only_button.config(state="disabled")
 
     def _enable_run_buttons(self) -> None:
         self.run_full_button.config(state="normal")
         self.run_text_button.config(state="normal")
+        self.run_summary_only_button.config(state="normal")
 
     def run_pipeline_clicked(self) -> None:
         file_path = self.selected_file.get().strip()
@@ -198,7 +206,7 @@ class TherapyAssistantApp:
         cleanup_prompt = self.cleanup_prompt_text.get("1.0", tk.END).strip()
         summary_prompt = self.summary_prompt_text.get("1.0", tk.END).strip()
 
-        if not self._validate_prompts(cleanup_prompt, summary_prompt):
+        if not self._validate_prompts(cleanup_prompt, summary_prompt, require_cleanup=True):
             return
 
         self._disable_run_buttons()
@@ -224,7 +232,7 @@ class TherapyAssistantApp:
         cleanup_prompt = self.cleanup_prompt_text.get("1.0", tk.END).strip()
         summary_prompt = self.summary_prompt_text.get("1.0", tk.END).strip()
 
-        if not self._validate_prompts(cleanup_prompt, summary_prompt):
+        if not self._validate_prompts(cleanup_prompt, summary_prompt, require_cleanup=True):
             return
 
         self._disable_run_buttons()
@@ -236,6 +244,30 @@ class TherapyAssistantApp:
         thread = threading.Thread(
             target=self._run_text_pipeline_background,
             args=(raw_transcript, cleanup_prompt, summary_prompt),
+            daemon=True,
+        )
+        thread.start()
+
+    def run_summary_only_clicked(self) -> None:
+        cleaned_transcript = self.cleaned_text.get("1.0", tk.END).strip()
+        if not cleaned_transcript:
+            messagebox.showwarning("Missing cleaned transcript", "Cleaned Transcript is empty.")
+            return
+
+        summary_prompt = self.summary_prompt_text.get("1.0", tk.END).strip()
+
+        if "{TRANSCRIPTION}" not in summary_prompt:
+            messagebox.showerror("Invalid summary prompt", "Summary prompt must contain {TRANSCRIPTION}")
+            return
+
+        self._disable_run_buttons()
+        self.status_label.config(text="Running summary only from cleaned transcript...")
+
+        self.summary_text.delete("1.0", tk.END)
+
+        thread = threading.Thread(
+            target=self._run_summary_only_background,
+            args=(cleaned_transcript, summary_prompt),
             daemon=True,
         )
         thread.start()
@@ -262,12 +294,22 @@ class TherapyAssistantApp:
         except Exception as exc:
             self.root.after(0, self._handle_error, str(exc))
 
+    def _run_summary_only_background(self, cleaned_transcript: str, summary_prompt: str) -> None:
+        try:
+            result = run_summary_only_pipeline(
+                cleaned_transcript,
+                summary_prompt_template=summary_prompt,
+            )
+            self.root.after(0, self._update_ui_with_result, result)
+        except Exception as exc:
+            self.root.after(0, self._handle_error, str(exc))
+
     def _update_ui_with_result(self, result: dict) -> None:
-        if result["raw_transcript"]:
+        if result.get("raw_transcript"):
             self.raw_text.delete("1.0", tk.END)
             self.raw_text.insert(tk.END, result["raw_transcript"])
 
-        if result["cleaned_transcript"]:
+        if result.get("cleaned_transcript"):
             self.cleaned_text.delete("1.0", tk.END)
             self.cleaned_text.insert(tk.END, result["cleaned_transcript"])
 
@@ -275,7 +317,7 @@ class TherapyAssistantApp:
         self.summary_text.insert(tk.END, result["summary"])
 
         self.status_label.config(
-            text=f"Done. Detected language: {result['detected_language']}"
+            text=f"Done. Detected language: {result.get('detected_language', 'unknown')}"
         )
         self._enable_run_buttons()
         self.notebook.select(self.results_tab)
