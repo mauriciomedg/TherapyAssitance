@@ -12,49 +12,175 @@ from run_session import (
 )
 
 
+# =========================
+# DARK THEME
+# =========================
+
+BG_MAIN = "#1e1e1e"
+BG_PANEL = "#252526"
+BG_INPUT = "#2d2d30"
+BG_BUTTON = "#3c3c3c"
+BG_BUTTON_ACTIVE = "#4a4a4a"
+FG_MAIN = "#d4d4d4"
+FG_MUTED = "#aaaaaa"
+ACCENT = "#0e639c"
+BORDER = "#3f3f46"
+INSERT = "#ffffff"
+SELECT_BG = "#264f78"
+SELECT_FG = "#ffffff"
+
+
+def apply_dark_theme(root: tk.Tk) -> None:
+    root.configure(bg=BG_MAIN)
+
+    style = ttk.Style()
+    style.theme_use("default")
+
+    style.configure(
+        "TNotebook",
+        background=BG_MAIN,
+        borderwidth=0,
+    )
+
+    style.configure(
+        "TNotebook.Tab",
+        background=BG_BUTTON,
+        foreground=FG_MAIN,
+        padding=(12, 6),
+        borderwidth=0,
+    )
+
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", ACCENT), ("active", BG_BUTTON_ACTIVE)],
+        foreground=[("selected", "#ffffff"), ("active", "#ffffff")],
+    )
+
+
+def create_dark_button(parent, text, command):
+    return tk.Button(
+        parent,
+        text=text,
+        command=command,
+        bg=BG_BUTTON,
+        fg=FG_MAIN,
+        activebackground=BG_BUTTON_ACTIVE,
+        activeforeground="#ffffff",
+        relief="flat",
+        bd=0,
+        padx=10,
+        pady=6,
+        highlightthickness=1,
+        highlightbackground=BORDER,
+        highlightcolor=ACCENT,
+    )
+
+
+def create_dark_label(parent, text, anchor="w"):
+    return tk.Label(
+        parent,
+        text=text,
+        bg=BG_MAIN,
+        fg=FG_MAIN,
+        anchor=anchor,
+    )
+
+
+def create_dark_frame(parent, bg=BG_MAIN):
+    return tk.Frame(parent, bg=bg)
+
+
+def style_text_widget(widget):
+    widget.configure(
+        bg=BG_INPUT,
+        fg=FG_MAIN,
+        insertbackground=INSERT,
+        selectbackground=SELECT_BG,
+        selectforeground=SELECT_FG,
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground=BORDER,
+        highlightcolor=ACCENT,
+        font=("Consolas", 10),
+        padx=8,
+        pady=8,
+    )
+
+
+def style_entry_widget(widget):
+    widget.configure(
+        bg=BG_INPUT,
+        fg=FG_MAIN,
+        insertbackground=INSERT,
+        selectbackground=SELECT_BG,
+        selectforeground=SELECT_FG,
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground=BORDER,
+        highlightcolor=ACCENT,
+    )
+
+
+# =========================
+# APP
+# =========================
+
 class TherapyAssistantApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Therapy Assistance Prototype")
-        self.root.geometry("1150x900")
+        self.root.geometry("1200x920")
+        self.root.configure(bg=BG_MAIN)
 
         self.selected_file = tk.StringVar()
         self._build_ui()
 
     def _build_ui(self) -> None:
-        top_frame = tk.Frame(self.root)
+        # Top controls
+        top_frame = create_dark_frame(self.root, BG_MAIN)
         top_frame.pack(fill="x", padx=10, pady=10)
 
-        tk.Label(top_frame, text="Audio file:").pack(side="left")
+        create_dark_label(top_frame, "Audio file:").pack(side="left")
 
         self.file_entry = tk.Entry(top_frame, textvariable=self.selected_file, width=55)
-        self.file_entry.pack(side="left", padx=5)
+        style_entry_widget(self.file_entry)
+        self.file_entry.pack(side="left", padx=8)
 
-        tk.Button(top_frame, text="Browse", command=self.browse_file).pack(side="left", padx=5)
+        create_dark_button(top_frame, "Browse", self.browse_file).pack(side="left", padx=4)
 
-        self.run_full_button = tk.Button(
-            top_frame, text="Run Full Pipeline", command=self.run_pipeline_clicked
+        self.run_full_button = create_dark_button(
+            top_frame, "Run Full Pipeline", self.run_pipeline_clicked
         )
-        self.run_full_button.pack(side="left", padx=5)
+        self.run_full_button.pack(side="left", padx=4)
 
-        self.run_text_button = tk.Button(
-            top_frame, text="Run From Raw Transcript", command=self.run_from_text_clicked
+        self.run_text_button = create_dark_button(
+            top_frame, "Run From Raw Transcript", self.run_from_text_clicked
         )
-        self.run_text_button.pack(side="left", padx=5)
+        self.run_text_button.pack(side="left", padx=4)
 
-        self.run_summary_only_button = tk.Button(
-            top_frame, text="Run Summary Only", command=self.run_summary_only_clicked
+        self.run_summary_only_button = create_dark_button(
+            top_frame, "Run Summary Only", self.run_summary_only_clicked
         )
-        self.run_summary_only_button.pack(side="left", padx=5)
+        self.run_summary_only_button.pack(side="left", padx=4)
 
-        self.status_label = tk.Label(self.root, text="Ready", anchor="w")
-        self.status_label.pack(fill="x", padx=10)
+        self.status_label = tk.Label(
+            self.root,
+            text="Ready",
+            anchor="w",
+            bg=BG_MAIN,
+            fg=FG_MUTED,
+            padx=10,
+        )
+        self.status_label.pack(fill="x")
 
+        # Notebook / tabs
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.prompts_tab = tk.Frame(self.notebook)
-        self.results_tab = tk.Frame(self.notebook)
+        self.prompts_tab = create_dark_frame(self.notebook, BG_MAIN)
+        self.results_tab = create_dark_frame(self.notebook, BG_MAIN)
 
         self.notebook.add(self.prompts_tab, text="Prompts")
         self.notebook.add(self.results_tab, text="Results")
@@ -63,41 +189,48 @@ class TherapyAssistantApp:
         self._build_results_tab()
 
     def _build_prompts_tab(self) -> None:
-        cleanup_header = tk.Frame(self.prompts_tab)
+        # Cleanup header
+        cleanup_header = create_dark_frame(self.prompts_tab, BG_MAIN)
         cleanup_header.pack(fill="x", padx=10, pady=(10, 0))
 
-        tk.Label(cleanup_header, text="Cleanup Prompt").pack(side="left")
-        tk.Button(cleanup_header, text="Load", command=self.load_cleanup_prompt).pack(side="right", padx=2)
-        tk.Button(cleanup_header, text="Save", command=self.save_cleanup_prompt).pack(side="right", padx=2)
-        tk.Button(cleanup_header, text="Reset", command=self.reset_cleanup_prompt).pack(side="right", padx=2)
+        create_dark_label(cleanup_header, "Cleanup Prompt").pack(side="left")
+        create_dark_button(cleanup_header, "Load", self.load_cleanup_prompt).pack(side="right", padx=2)
+        create_dark_button(cleanup_header, "Save", self.save_cleanup_prompt).pack(side="right", padx=2)
+        create_dark_button(cleanup_header, "Reset", self.reset_cleanup_prompt).pack(side="right", padx=2)
 
         self.cleanup_prompt_text = scrolledtext.ScrolledText(self.prompts_tab, height=14, wrap=tk.WORD)
+        style_text_widget(self.cleanup_prompt_text)
         self.cleanup_prompt_text.pack(fill="both", expand=True, padx=10, pady=5)
         self.cleanup_prompt_text.insert("1.0", DEFAULT_CLEANUP_PROMPT_TEMPLATE.strip())
 
-        summary_header = tk.Frame(self.prompts_tab)
+        # Summary header
+        summary_header = create_dark_frame(self.prompts_tab, BG_MAIN)
         summary_header.pack(fill="x", padx=10, pady=(10, 0))
 
-        tk.Label(summary_header, text="Summary Prompt").pack(side="left")
-        tk.Button(summary_header, text="Load", command=self.load_summary_prompt).pack(side="right", padx=2)
-        tk.Button(summary_header, text="Save", command=self.save_summary_prompt).pack(side="right", padx=2)
-        tk.Button(summary_header, text="Reset", command=self.reset_summary_prompt).pack(side="right", padx=2)
+        create_dark_label(summary_header, "Summary Prompt").pack(side="left")
+        create_dark_button(summary_header, "Load", self.load_summary_prompt).pack(side="right", padx=2)
+        create_dark_button(summary_header, "Save", self.save_summary_prompt).pack(side="right", padx=2)
+        create_dark_button(summary_header, "Reset", self.reset_summary_prompt).pack(side="right", padx=2)
 
         self.summary_prompt_text = scrolledtext.ScrolledText(self.prompts_tab, height=14, wrap=tk.WORD)
+        style_text_widget(self.summary_prompt_text)
         self.summary_prompt_text.pack(fill="both", expand=True, padx=10, pady=5)
         self.summary_prompt_text.insert("1.0", DEFAULT_SUMMARY_PROMPT_TEMPLATE.strip())
 
     def _build_results_tab(self) -> None:
-        tk.Label(self.results_tab, text="Raw Transcript").pack(anchor="w", padx=10, pady=(10, 0))
+        create_dark_label(self.results_tab, "Raw Transcript").pack(anchor="w", padx=10, pady=(10, 0))
         self.raw_text = scrolledtext.ScrolledText(self.results_tab, height=10, wrap=tk.WORD)
+        style_text_widget(self.raw_text)
         self.raw_text.pack(fill="both", expand=True, padx=10, pady=5)
 
-        tk.Label(self.results_tab, text="Cleaned Transcript").pack(anchor="w", padx=10, pady=(10, 0))
+        create_dark_label(self.results_tab, "Cleaned Transcript").pack(anchor="w", padx=10, pady=(10, 0))
         self.cleaned_text = scrolledtext.ScrolledText(self.results_tab, height=10, wrap=tk.WORD)
+        style_text_widget(self.cleaned_text)
         self.cleaned_text.pack(fill="both", expand=True, padx=10, pady=5)
 
-        tk.Label(self.results_tab, text="Final Summary").pack(anchor="w", padx=10, pady=(10, 0))
+        create_dark_label(self.results_tab, "Final Summary").pack(anchor="w", padx=10, pady=(10, 0))
         self.summary_text = scrolledtext.ScrolledText(self.results_tab, height=10, wrap=tk.WORD)
+        style_text_widget(self.summary_text)
         self.summary_text.pack(fill="both", expand=True, padx=10, pady=5)
 
     def browse_file(self) -> None:
@@ -126,7 +259,7 @@ class TherapyAssistantApp:
             content = Path(file_path).read_text(encoding="utf-8")
             widget.delete("1.0", tk.END)
             widget.insert("1.0", content)
-            self.status_label.config(text=f"Loaded prompt: {file_path}")
+            self.status_label.config(text=f"Loaded prompt: {file_path}", fg=FG_MUTED)
         except Exception as exc:
             messagebox.showerror("Load error", f"Could not load file:\n{exc}")
 
@@ -146,7 +279,7 @@ class TherapyAssistantApp:
         try:
             content = widget.get("1.0", tk.END).strip()
             Path(file_path).write_text(content, encoding="utf-8")
-            self.status_label.config(text=f"Saved prompt: {file_path}")
+            self.status_label.config(text=f"Saved prompt: {file_path}", fg=FG_MUTED)
         except Exception as exc:
             messagebox.showerror("Save error", f"Could not save file:\n{exc}")
 
@@ -159,7 +292,7 @@ class TherapyAssistantApp:
     def reset_cleanup_prompt(self) -> None:
         self.cleanup_prompt_text.delete("1.0", tk.END)
         self.cleanup_prompt_text.insert("1.0", DEFAULT_CLEANUP_PROMPT_TEMPLATE.strip())
-        self.status_label.config(text="Cleanup prompt reset to default")
+        self.status_label.config(text="Cleanup prompt reset to default", fg=FG_MUTED)
 
     def load_summary_prompt(self) -> None:
         self._load_prompt_into_widget(self.summary_prompt_text)
@@ -170,7 +303,7 @@ class TherapyAssistantApp:
     def reset_summary_prompt(self) -> None:
         self.summary_prompt_text.delete("1.0", tk.END)
         self.summary_prompt_text.insert("1.0", DEFAULT_SUMMARY_PROMPT_TEMPLATE.strip())
-        self.status_label.config(text="Summary prompt reset to default")
+        self.status_label.config(text="Summary prompt reset to default", fg=FG_MUTED)
 
     def _validate_prompts(self, cleanup_prompt: str, summary_prompt: str, require_cleanup: bool = True) -> bool:
         if require_cleanup and "{TRANSCRIPTION}" not in cleanup_prompt:
@@ -210,7 +343,7 @@ class TherapyAssistantApp:
             return
 
         self._disable_run_buttons()
-        self.status_label.config(text="Running full pipeline... please wait")
+        self.status_label.config(text="Running full pipeline... please wait", fg=FG_MUTED)
 
         self.raw_text.delete("1.0", tk.END)
         self.cleaned_text.delete("1.0", tk.END)
@@ -236,7 +369,7 @@ class TherapyAssistantApp:
             return
 
         self._disable_run_buttons()
-        self.status_label.config(text="Running cleanup + summary from raw transcript...")
+        self.status_label.config(text="Running cleanup + summary from raw transcript...", fg=FG_MUTED)
 
         self.cleaned_text.delete("1.0", tk.END)
         self.summary_text.delete("1.0", tk.END)
@@ -261,7 +394,7 @@ class TherapyAssistantApp:
             return
 
         self._disable_run_buttons()
-        self.status_label.config(text="Running summary only from cleaned transcript...")
+        self.status_label.config(text="Running summary only from cleaned transcript...", fg=FG_MUTED)
 
         self.summary_text.delete("1.0", tk.END)
 
@@ -317,19 +450,21 @@ class TherapyAssistantApp:
         self.summary_text.insert(tk.END, result["summary"])
 
         self.status_label.config(
-            text=f"Done. Detected language: {result.get('detected_language', 'unknown')}"
+            text=f"Done. Detected language: {result.get('detected_language', 'unknown')}",
+            fg=FG_MUTED,
         )
         self._enable_run_buttons()
         self.notebook.select(self.results_tab)
 
     def _handle_error(self, error_message: str) -> None:
-        self.status_label.config(text="Error")
+        self.status_label.config(text="Error", fg="#ff6b6b")
         self._enable_run_buttons()
         messagebox.showerror("Pipeline error", error_message)
 
 
 def main() -> None:
     root = tk.Tk()
+    apply_dark_theme(root)
     app = TherapyAssistantApp(root)
     root.mainloop()
 
